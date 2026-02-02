@@ -1,0 +1,71 @@
+services:
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    user: "${PUID}:${PGID}"
+    restart: unless-stopped
+    ports:
+      - "${ND_PORT}:4533"
+    environment:
+      - ND_SCANSCHEDULE=1h
+      - ND_LOGLEVEL=info
+      - ND_BASEURL=
+      - TZ=${TZ}
+    volumes:
+      - "${HOST_MUSIC_DIR}:/music:ro"
+      - "${HOST_DATA_DIR}:/data"
+    networks:
+      - music_network
+
+  music-analyze:
+    build:
+      context: ./apps/music-analyze
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+    image: music-ai-analyzer:latest
+    container_name: music-analyze
+    # Nutzt separate ID (z.B. 33 für www-data), falls nötig für Schreibrechte
+    user: "${ANALYZER_PUID}:${ANALYZER_PGID}"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CUDA_VISIBLE_DEVICES=-1
+      - TF_CPP_MIN_LOG_LEVEL=2
+      - TZ=${TZ}
+      - NUMBA_CACHE_DIR=/tmp
+      - AUSSORTIERT_PATH=/aussortiert
+    volumes:
+      - "${HOST_MUSIC_DIR}:/music:rw"
+      - "${HOST_DATA_DIR}:/data:rw"
+      - "${HOST_ANCHOR_DIR}:/anker:rw"
+      - "${HOST_SORT_DIR}:/aussortiert"
+    depends_on:
+      - navidrome
+    networks:
+      - music_network
+
+  music-dj:
+    build:
+      context: ./apps/music-dj
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+    image: music-ai-dj:latest
+    container_name: music-dj
+    user: "${PUID}:${PGID}"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ}
+      - ND_MUSIC_DIR=/music
+      - ND_DB_PATH=/data/navidrome.db
+    volumes:
+      - "${HOST_MUSIC_DIR}:/music:ro"
+      - "${HOST_DATA_DIR}:/data:rw"
+    depends_on:
+      - navidrome
+    networks:
+      - music_network
+
+networks:
+  music_network:
+    driver: bridge
