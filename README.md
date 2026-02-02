@@ -114,6 +114,7 @@ Plaintext
 This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.---
 
 #Donate the next songs to my library:
+
 [![PayPal](https://img.shields.io/badge/PayPal-004595?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/StefanAretz89)
 
 ### 🤝 Acknowledgements & Third-Party Tech
