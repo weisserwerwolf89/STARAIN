@@ -45,7 +45,7 @@ The AI compares new uploads against these reference points to choose the correct
 (Tested only with .flac)
 
 IMPORTANT!:
-## The janitor
+## The Janitor
 * If desired, the system automatically sorts your files into a clean `artist/album/title.flac` structure after analysis.
 * If this is not desired, omit the file ./music-analyze/organize_worker.py!
 ---
