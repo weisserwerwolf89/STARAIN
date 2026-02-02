@@ -108,8 +108,7 @@ Plaintext
 ├── navidrome/          <-- Database & Cache (Backup this!)
 ├── music_anchors/      <-- (Optional) Reference tracks for AI
 └── music_trash/        <-- Quarantine for bad/corrupted files
-
----
+```
 📜 License
 
 This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.---
