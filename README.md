@@ -2,18 +2,6 @@
 
 Stefan Aretz AI for Navidrome — Let it rain smart playlists.
 
-**Bring intelligence and sanity to your Navidrome library.**
-## 🤝 Acknowledgements & Third-Party Tech
-
-STARAIN stands on the shoulders of giants. This project would not be possible without the following amazing Open Source projects:
-
-* **[Navidrome](https://www.navidrome.org/)** (GPLv3) – The core music server we all love.
-* **[Essentia](https://essentia.upf.edu/)** (AGPLv3/GPLv3) – The powerful audio analysis library from MTG UPF.
-* **[TensorFlow](https://www.tensorflow.org/)** (Apache 2.0) – Providing the machine learning muscle for mood detection.
-* **[Librosa](https://librosa.org/)** (ISC) – Essential for audio processing and spectrograms.
-* **[Mutagen](https://mutagen.readthedocs.io/)** (GPLv2+) – Handling all the heavy lifting for audio metadata and tags.
-* **[OpenL3](https://github.com/marl/openl3)** (Apache 2.0) – Deep audio embeddings for similarity matching.
-
 **Turn your Navidrome server into an intelligent, AI-powered music machine.**
 
 This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It monitors your library, uses advanced audio analysis (Essentia & TensorFlow) to enrich your files with metadata, and acts as an automatic DJ that creates flow-perfect playlists based on Mood, Key, and BPM.
@@ -50,7 +38,7 @@ IMPORTANT!:
 * If this is not desired, omit the file ./music-analyze/organize_worker.py!
 ---
 
-## ⚠️ Disclaimer & Warning
+## ⚠️ Disclaimer & Warning & Logic
 
 **This software writes directly to the Navidrome SQLite database (`navidrome.db`).**
 
@@ -58,6 +46,12 @@ IMPORTANT!:
 * While tested carefully, direct database manipulation always carries a risk.
 * **ALWAYS backup your `navidrome.db` before using this software.**
 * Use at your own risk.
+
+* **High CPU Load:** On a Raspberry Pi 5, the analysis of a single song takes about **20 minutes at 100% CPU load**. A **cooling fan is strictly required** to prevent thermal throttling or damage.
+* **Auto-Rating:** Once a song is played **5 times**, it automatically receives a **3-star rating**.
+* **Playlist Logic:** * Songs with **2 stars or less** are automatically removed from active playlists.
+    * Playlists are recalculated immediately after a rating change.
+    * Songs in the **"KI-Blacklist"** playlist are ignored by the auto-rating system.
 
 ---
 
@@ -118,3 +112,15 @@ Plaintext
 📜 License
 
 This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
+
+## 🤝 Acknowledgements & Third-Party Tech
+
+STARAIN stands on the shoulders of giants. This project would not be possible without the following amazing Open Source projects:
+
+* **[Navidrome](https://www.navidrome.org/)** (GPLv3) – The core music server we all love.
+* **[Essentia](https://essentia.upf.edu/)** (AGPLv3/GPLv3) – The powerful audio analysis library from MTG UPF.
+* **[TensorFlow](https://www.tensorflow.org/)** (Apache 2.0) – Providing the machine learning muscle for mood detection.
+* **[Librosa](https://librosa.org/)** (ISC) – Essential for audio processing and spectrograms.
+* **[Mutagen](https://mutagen.readthedocs.io/)** (GPLv2+) – Handling all the heavy lifting for audio metadata and tags.
+* **[OpenL3](https://github.com/marl/openl3)** (Apache 2.0) – Deep audio embeddings for similarity matching.
+
