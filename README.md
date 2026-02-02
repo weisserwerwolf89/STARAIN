@@ -1,4 +1,4 @@
-🌟 STARAIN
+# **🌟 STARAIN**
 
 Stefan Aretz AI for Navidrome — Let it rain smart playlists.
 
