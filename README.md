@@ -11,10 +11,16 @@ This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It 
 ## ✨ Features
 
 ### 🧠 The Analyzer (`music-analyze`)
-* **Deep Audio Analysis:** Uses the `Essentia` library to extract BPM, Key, Danceability, and Intensity.
-* **Mood Detection:** Classifies songs into moods (e.g., *Happy, Aggressive, Relaxed, Party*) using TensorFlow models.
-* **Quality Gate:** Automatically detects corrupted files or fake extensions and moves them to a "Trash" folder.
-* **Anchor System:** Uses reference tracks ("Anchors") to calibrate the analysis to your personal taste.
+
+    Vector Embeddings (Sonic DNA): Extracts high-dimensional feature vectors (Embeddings) for every track. This maps the mathematical "soul" of the music, allowing the AI to find songs that sound similar, regardless of their genre tags.
+
+    Deep Audio Analysis: Uses the Essentia library to extract precise technical metrics: BPM, Key, Danceability, Energy, and Dynamic Range.
+
+    Mood Detection: Classifies songs into distinct emotional categories (e.g., Happy, Aggressive, Relaxed, Party) using pre-trained TensorFlow models.
+
+    Quality Gate: Acts as a proactive filter. Automatically detects corrupted files, 0-byte errors, or fake extensions and moves them to a secure "Quarantine" area for manual inspection, keeping your main library pristine.
+
+    Anchor System: Uses your manually selected reference tracks ("Anchors") to calibrate the AI's predictions to your specific personal taste.
 
 ### 🎧 The DJ (`music-dj`)
 
