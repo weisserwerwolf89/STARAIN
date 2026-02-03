@@ -3,185 +3,274 @@
 # Licensed under the GNU General Public License v3.0
 
 import os
-import time
-import subprocess
-import argparse
-import sqlite3
 import sys
-import shutil
+import argparse
 import datetime
 import logging
-import random
+import gc
+import json
+import csv
+import numpy as np
+import soundfile as sf
+import essentia.standard as es
+import librosa
+from scipy.spatial.distance import cosine
+
 import mutagen
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, TXXX, TBPM, TKEY, TMOO
+from mutagen.flac import FLAC
 
-# --- KONFIGURATION ---
-DB_PATH = "/navidrome.db"
-MUSIC_DIR = "/music"
-WORKER_SCRIPT = "analyze_worker.py"
-ORGANIZER_SCRIPT = "organize_worker.py" # <--- Der optionaler Hausmeister
+# --- NEU: Config Import ---
+import starain_config as cfg
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+logging.basicConfig(level=logging.ERROR)
+TIME_FMT = "%Y-%m-%d %H:%M:%S"
+ANCHOR_BASE_PATH = "/anker"
+CSV_LOG_PATH = os.path.join(ANCHOR_BASE_PATH, "analysis_history_pc.csv")
 
-def get_time():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# --- MOOD TABLE ---
+MOOD_TABLE = {
+    "Explosiv":      {"min_int": 0.85, "min_dance": 1.5},
+    "Aggressiv":     {"min_int": 0.80, "scale": "minor"},
+    "Friedlich":     {"max_int": 0.45, "scale": "major"},
+    "Melancholisch": {"max_int": 0.60, "scale": "minor"},
+    "Party":         {"min_dance": 1.6, "scale": "major", "min_int": 0.6},
+    "Tanzbar":       {"min_dance": 1.4},
+    "Romantisch":    {"min_bpm": 40, "max_bpm": 100, "max_dance": 1.2, "max_int": 0.55},
+    "Gefühlvoll":    {"min_bpm": 50, "max_bpm": 110, "max_dance": 1.3},
+    "Energetisch":   {"min_bpm": 128, "min_int": 0.7},
+    "Treibend":      {"min_bpm": 130, "min_dance": 1.6},
+    "Groovy":        {"min_dance": 1.5, "max_bpm": 125},
+    "Cool":          {"min_dance": 1.4, "max_int": 0.65}
+}
 
-# ==========================================
-# MANAGER TOOLS (Snapshot & Status)
-# ==========================================
+# --- GPU/KI SETUP ---
+openl3, tf = None, None
+GPU_INITIALIZED = False
+USE_GPU = False
+INITIAL_BATCH_SIZE = 1
 
-def get_file_analyze_status(filepath):
-    """Prüft auf XX_ANALYZE_DONE Tag."""
+def ensure_gpu_libraries():
+    global tf, openl3, GPU_INITIALIZED, USE_GPU, INITIAL_BATCH_SIZE
+    if GPU_INITIALIZED: return
+    try:
+        import tensorflow as tf
+        import openl3
+        physical_devices = tf.config.list_physical_devices('GPU')
+        USE_GPU = len(physical_devices) > 0
+        INITIAL_BATCH_SIZE = 32 if USE_GPU else 1
+        print(f" 🖥️  [SYSTEM] KI-Modus: {'GPU 🚀' if USE_GPU else 'CPU 🐢'} (Batch: {INITIAL_BATCH_SIZE})", flush=True)
+    except Exception as e:
+        sys.stderr.write(f" ⚠️  [WARN] KI-Libs nicht geladen: {e}\n")
+    GPU_INITIALIZED = True
+
+def log_to_csv(data):
+    try:
+        file_exists = os.path.isfile(CSV_LOG_PATH)
+        with open(CSV_LOG_PATH, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "Timestamp", "Filename", "Action", "BPM_Final", "Method",
+                "Anchor_Ref", "Score", "Confidence", "Essentia_Raw", "Librosa_Raw"
+            ])
+            if not file_exists:
+                writer.writeheader()
+            data["Timestamp"] = datetime.datetime.now().strftime(TIME_FMT)
+            writer.writerow(data)
+    except Exception as e:
+        print(f" ⚠️  [CSV-ERROR] Konnte {CSV_LOG_PATH} nicht schreiben: {e}", flush=True)
+
+def repair_flac_id3(filepath):
+    if not filepath.lower().endswith(".flac"): return
+    try:
+        audio = FLAC(filepath)
+        audio.save(deleteid3=True)
+    except: pass
+
+def read_metadata_for_embedding(filepath):
     try:
         f = mutagen.File(filepath)
-        if f is None: return 'VIRGIN'
+        if isinstance(f, FLAC) and "XX_EMBEDDING_JSON" in f:
+            return json.loads(f["XX_EMBEDDING_JSON"][0])
+        elif f.tags and isinstance(f.tags, ID3):
+            for frame in f.tags.getall("TXXX"):
+                if frame.desc == "XX_EMBEDDING_JSON": return json.loads(frame.text[0])
+    except: pass
+    return None
 
-        def read_tag(key):
-            v = None
-            if hasattr(f, 'get'):
-                res = f.get(key)
-                if res: v = res[0]
-            if v is None and hasattr(f, 'tags') and isinstance(f.tags, ID3):
-                for frame in f.tags.getall("TXXX"):
-                    if frame.desc == key:
-                        v = frame.text[0]; break
-            return str(v).strip() if v else None
-
-        val = read_tag("XX_ANALYZE_DONE")
-        if val and len(val) > 5: return 'DONE'
-        return 'VIRGIN'
-    except:
-        return 'VIRGIN'
-
-def create_db_snapshot(src_db):
-    temp_db = "/tmp/navidrome_snapshot.db"
-    if os.path.exists(temp_db):
-        try: os.remove(temp_db)
-        except: pass
+def read_metadata_from_tag(filepath):
     try:
-        if not os.path.exists(src_db): return None
-        shutil.copy2(src_db, temp_db)
-        if os.path.exists(src_db + "-wal"):
-            shutil.copy2(src_db + "-wal", temp_db + "-wal")
-        return temp_db
-    except Exception as e:
-        print(f"❌ Snapshot Fehler: {e}")
-        return None
+        f = mutagen.File(filepath)
+        data = {"emb": None, "bpm": 120}
+        if isinstance(f, FLAC):
+            if "XX_EMBEDDING_JSON" in f: data["emb"] = json.loads(f["XX_EMBEDDING_JSON"][0])
+            if "BPM" in f: data["bpm"] = float(f["BPM"][0])
+        elif f.tags and isinstance(f.tags, ID3):
+            for frame in f.tags.getall("TXXX"):
+                if frame.desc == "XX_EMBEDDING_JSON": data["emb"] = json.loads(frame.text[0])
+            if "TBPM" in f.tags: data["bpm"] = float(f.tags["TBPM"].text[0])
+        return data
+    except: return {"emb": None, "bpm": 120}
 
-def get_files_from_db(db_path):
+def load_all_anchors():
+    anchors = []
+    if not os.path.exists(ANCHOR_BASE_PATH): return anchors
+    for category in ["FAST", "MID", "SLOW"]:
+        cat_path = os.path.join(ANCHOR_BASE_PATH, category)
+        if not os.path.exists(cat_path): continue
+        for f_name in os.listdir(cat_path):
+            if f_name.lower().endswith((".flac", ".mp3")):
+                meta = read_metadata_from_tag(os.path.join(cat_path, f_name))
+                if meta["emb"]:
+                    anchors.append({"category": category, "name": f_name, "embedding": meta["emb"], "bpm": meta.get("bpm", 120)})
+    return anchors
+
+def determine_bpm_logic(essentia_bpm, librosa_bpm, anchor_bpm):
+    TOLERANCE = 4.0
+    if abs(essentia_bpm - anchor_bpm) <= TOLERANCE:
+        return int(round(essentia_bpm)), "Essentia (Direct)"
+    if librosa_bpm > 0 and abs(librosa_bpm - anchor_bpm) <= TOLERANCE:
+        return int(round(librosa_bpm)), "Librosa (Direct)"
+    candidates = []
+    for factor in [1, 2, 3]:
+        candidates.append((essentia_bpm * factor, f"Essentia x{factor}"))
+        candidates.append((essentia_bpm / factor, f"Essentia /{factor}"))
+    if librosa_bpm > 0:
+        for factor in [1, 2, 3]:
+            candidates.append((librosa_bpm * factor, f"Librosa x{factor}"))
+            candidates.append((librosa_bpm / factor, f"Librosa /{factor}"))
+    if not candidates: return int(round(anchor_bpm)), "Anchor-Fallback"
+    best_val, best_desc = min(candidates, key=lambda x: abs(x[0] - anchor_bpm))
+    return int(round(best_val)), best_desc
+
+def determine_moods(bpm, key_str, dance, intensity):
+    matches = []
+    scale = "major" if any(x in key_str.lower() for x in ["major", "dur"]) else "minor"
+    is_slow_ballad = (dance < 1.35) and (bpm < 95)
+    for mood, c in MOOD_TABLE.items():
+        if is_slow_ballad and mood in ["Party", "Treibend", "Explosiv", "Energetisch"]: continue
+        match = True
+        if "min_bpm" in c and bpm < c["min_bpm"]: match = False
+        if "max_bpm" in c and bpm > c["max_bpm"]: match = False
+        if "min_dance" in c and dance < c["min_dance"]: match = False
+        if "max_dance" in c and dance > c["max_dance"]: match = False
+        if "min_int" in c and intensity < c["min_int"]: match = False
+        if "max_int" in c and intensity > c["max_int"]: match = False
+        if "scale" in c and scale != c["scale"]: match = False
+        if match: matches.append(mood)
+    return matches if matches else ["Ernst"]
+
+def write_tags(filepath, data):
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT path FROM media_file")
-        rows = cursor.fetchall()
-        conn.close()
-        return [r[0] for r in rows]
-    except Exception as e:
-        print(f"❌ SQL Fehler: {e}")
-        return []
+        f = mutagen.File(filepath)
+        if f is None: return False
+        if f.tags is None: f.add_tags()
+        ts = datetime.datetime.now().strftime(TIME_FMT)
 
-# ==========================================
-# MAIN LOOP
-# ==========================================
+        def set_txxx(k, v):
+            if isinstance(f, FLAC): f[k] = str(v)
+            else: f.tags.add(TXXX(encoding=3, desc=k, text=str(v)))
+
+        new_bpm = str(int(data['bpm']))
+        if isinstance(f, FLAC):
+            f['BPM'], f['KEY'], f['MOOD'] = new_bpm, data['key'], data['MOOD']
+        else:
+            f.tags.add(TBPM(encoding=3, text=new_bpm))
+            f.tags.add(TKEY(encoding=3, text=data['key']))
+            f.tags.add(TMOO(encoding=3, text=",".join(data['MOOD'])))
+
+        set_txxx('XX_DANCEABILITY', data['XX_DANCEABILITY'])
+        set_txxx('XX_INTENSITY', data['XX_INTENSITY'])
+        set_txxx('XX_EMBEDDING_JSON', data['XX_EMBEDDING_JSON'])
+        set_txxx('XX_ANCHOR_MATCH', data['XX_ANCHOR_MATCH'])
+        set_txxx('XX_ANALYZE_DONE', ts)
+        f.save(); return True
+    except: return False
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--db", default=DB_PATH)
-    parser.add_argument("--music_dir", default=MUSIC_DIR)
-    args = parser.parse_args()
+    parser = argparse.ArgumentParser(); parser.add_argument("--file", required=True); args = parser.parse_args()
+    fname = os.path.basename(args.file)
+    repair_flac_id3(args.file)
 
-    print(f"--- MANAGER GESTARTET (V5.2 Modular Edition) ---", flush=True)
-    print(f"Modus: Random Shuffle + Optionaler Hausmeister", flush=True)
+    existing_emb = read_metadata_for_embedding(args.file)
+    cache_status = "♻️ (Cache)" if existing_emb else "🆕 (Neu)"
+    print(f" 🎵 [START] {fname} {cache_status}", flush=True)
 
-    while True:
-        try:
-            # 1. ORGANIZER CHECK
-            # Wir prüfen, ob das Skript existiert. Wenn ja, führen wir es aus.
-            if os.path.exists(ORGANIZER_SCRIPT):
-                # print(f"[{get_time()}] 🧹 Starte externen Hausmeister...", flush=True)
-                try:
-                    subprocess.run(
-                        ["python3", ORGANIZER_SCRIPT, "--music_dir", args.music_dir],
-                        check=False # Wir wollen nicht crashen, wenn der Hausmeister stolpert
-                    )
-                except Exception as e:
-                    print(f"❌ Fehler beim Hausmeister-Aufruf: {e}")
-            else:
-                # Silent Skip - Wenn das Skript fehlt, machen wir einfach weiter
-                pass
+    try:
+        loader = es.MonoLoader(filename=args.file, sampleRate=44100)
+        audio_ess = loader()
+        bpm_ess = es.RhythmExtractor2013(method="multifeature")(audio_ess)[0]
+        dance = es.Danceability()(audio_ess)[0]
+        intensity = min(1.0, (np.sqrt(np.mean(audio_ess**2)) * 3.5))
 
-            # 2. SNAPSHOT
-            snap_db = create_db_snapshot(args.db)
-            if not snap_db:
-                print("Warte auf DB...", flush=True)
-                time.sleep(10)
-                continue
+        with sf.SoundFile(args.file) as sf_f:
+            audio_np = sf_f.read(dtype='float32')
+            if len(audio_np.shape) > 1: audio_np = np.mean(audio_np, axis=1)
+            tempo_data, _ = librosa.beat.beat_track(y=audio_np, sr=sf_f.samplerate)
+            bpm_lib = float(tempo_data[0]) if isinstance(tempo_data, (np.ndarray, list)) else float(tempo_data)
 
-            # 3. DATEIEN HOLEN
-            db_files = get_files_from_db(snap_db)
+        if existing_emb:
+            current_emb = existing_emb
+        else:
+            ensure_gpu_libraries()
+            import openl3
+            emb_raw, _ = openl3.get_audio_embedding(audio_ess, 44100, batch_size=INITIAL_BATCH_SIZE, content_type="music", verbose=False)
+            current_emb = np.mean(emb_raw, axis=0).tolist()
 
-            # 4. QUEUE BAUEN (VOR-FILTER)
-            queue = []
-            if len(db_files) > 0:
-                print(f"[{get_time()}] 🔍 Prüfe DB auf neue Songs...", flush=True)
+        anchors = load_all_anchors()
+        best_a = None; max_s = -1.0
+        if current_emb and anchors:
+            target_vec = np.array(current_emb)
+            for a in anchors:
+                s = 1.0 - cosine(target_vec, np.array(a["embedding"]))
+                if s > max_s: max_s = s; best_a = a
 
-            for db_path in db_files:
-                rel_path = db_path
-                if rel_path.startswith("/music/"): rel_path = rel_path[7:]
-                elif rel_path.startswith("/"): rel_path = rel_path[1:]
+        print(f"    ├─ 🎹 Essentia: {bpm_ess:.2f} BPM", flush=True)
+        print(f"    ├─ 🎻 Librosa:  {bpm_lib:.2f} BPM", flush=True)
 
-                full_path = os.path.join(args.music_dir, rel_path)
-                if not os.path.exists(full_path): continue
+        final_bpm = int(round(bpm_ess))
+        method = "Essentia (Fallback)"
+        anchor_info = "Keiner"
+        confidence = 0
 
-                if get_file_analyze_status(full_path) == 'VIRGIN':
-                    queue.append(full_path)
+        if best_a and max_s > 0.70:
+            final_bpm, method = determine_bpm_logic(bpm_ess, bpm_lib, best_a["bpm"])
+            anchor_info = f"{best_a['category']} ({max_s:.2f}) - {best_a['name']}"
+            confidence = int(max_s * 100)
+            print(f"    ├─ ⚓ Referenz: {best_a['name']} ({confidence}% Match)", flush=True)
+            print(f"    └─ 🎯 Entscheidung: {method} -> {final_bpm} BPM", flush=True)
+        else:
+            print(f"    └─ ⚠️ Warnung: Kein Anker gefunden. Nutze Essentia Standard.", flush=True)
 
-            # 5. CLUSTER-LOGIK: MISCHEN!
-            if queue:
-                random.shuffle(queue)
-                print(f"[{get_time()}] 🎲 Queue gemischt ({len(queue)} Songs).", flush=True)
-            else:
-                print(f"[{get_time()}] ✅ Alles fertig. Schlafe 5 Minuten...", flush=True)
-                time.sleep(300)
-                continue
+        try: key, scale = es.KeyExtractor(profileType="edma")(audio_ess)[:2]
+        except: key, scale = es.KeyExtractor(profileType="bgate")(audio_ess)[:2]
 
-            # 6. ABARBEITEN
-            for i, full_path in enumerate(queue):
-                # Check, falls der Cluster-Partner schneller war
-                if get_file_analyze_status(full_path) == 'DONE':
-                    continue
+        # 1. Moods berechnen (Ergebnis ist DEUTSCH, da MOOD_TABLE deutsch ist)
+        raw_moods = determine_moods(final_bpm, f"{key} {scale}", dance, intensity)
 
-                filename = os.path.basename(full_path)
-                print(f"\n[{i+1}/{len(queue)}] [START] {filename}", flush=True)
+        # 2. Moods übersetzen (je nach starain_config Einstellung)
+        final_moods = cfg.translate_list(raw_moods)
 
-                try:
-                    process = subprocess.Popen(
-                        ["python3", WORKER_SCRIPT, "--file", full_path],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1
-                    )
-                    for line in process.stdout:
-                        print(f"   | {line.strip()}", flush=True)
-                    process.wait()
+        write_tags(args.file, {
+            'bpm': final_bpm, 'key': f"{key} {scale}",
+            'XX_DANCEABILITY': round(dance, 4), 'XX_INTENSITY': round(intensity, 4),
+            'XX_EMBEDDING_JSON': json.dumps(current_emb),
+            'XX_ANCHOR_MATCH': anchor_info,
+            'MOOD': final_moods  # <--- Jetzt übersetzt
+        })
 
-                    if process.returncode == 0:
-                        print(f"[SUCCESS] {filename}", flush=True)
-                    else:
-                        print(f"[FAIL] Exit Code {process.returncode}", flush=True)
+        log_to_csv({
+            "Filename": fname, "Action": "UPDATE",
+            "BPM_Final": final_bpm, "Method": method,
+            "Anchor_Ref": anchor_info, "Score": round(max_s, 3), "Confidence": confidence,
+            "Essentia_Raw": round(bpm_ess, 1), "Librosa_Raw": round(bpm_lib, 1)
+        })
 
-                except Exception as e:
-                    print(f"❌ Worker Start Fehler: {e}", flush=True)
+        print(f" ✅ [DONE] {fname}", flush=True)
+        global tf;
+        if tf: tf.keras.backend.clear_session(); gc.collect()
 
-                time.sleep(0.1)
-
-            print(f"[{get_time()}] Runde beendet. Schlafe 5 Minuten...", flush=True)
-            time.sleep(300)
-
-        except Exception as e:
-            print(f"❌ Loop Fehler: {e}", flush=True)
-            time.sleep(60)
+    except Exception as e:
+        sys.stderr.write(f" ❌ [ERROR] {e}\n"); sys.exit(1)
 
 if __name__ == "__main__":
     main()
