@@ -73,10 +73,6 @@ IMPORTANT!:
 * Use at your own risk.
 
 * **High CPU Load:** On a Raspberry Pi 5, the analysis of a single song takes about **20 minutes at 100% CPU load**. A **cooling fan is strictly required** to prevent thermal throttling or damage.
-* **Auto-Rating:** Once a song is played **5 times**, it automatically receives a **3-star rating**.
-* **Playlist Logic:** * Songs with **2 stars or less** are automatically removed from active playlists.
-    * Playlists are recalculated immediately after a rating change.
-    * Songs in the **"KI-Blacklist"** playlist are ignored by the auto-rating system.
 
 ---
 
