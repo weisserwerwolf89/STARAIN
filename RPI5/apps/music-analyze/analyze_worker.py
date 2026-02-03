@@ -10,27 +10,23 @@ import logging
 import gc
 import json
 import csv
-import subprocess
-import shutil
 import numpy as np
 import soundfile as sf
 import essentia.standard as es
 import librosa
 from scipy.spatial.distance import cosine
+
 import mutagen
 from mutagen.id3 import ID3, TXXX, TBPM, TKEY, TMOO
 from mutagen.flac import FLAC
 
+# --- NEU: Config Import ---
+import starain_config as cfg
+
 logging.basicConfig(level=logging.ERROR)
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 ANCHOR_BASE_PATH = "/anker"
-CSV_LOG_PATH = os.path.join(ANCHOR_BASE_PATH, "analysis_history.csv")
-AUSSORTIERT_PATH = os.getenv("AUSSORTIERT_PATH", "/aussortiert")
-
-# --- VERSIONIERUNG & KONFIGURATION ---
-ALGO_VERSION = "2026-02-01-v2-robust"  # Damit du später weißt, wer das war
-FFMPEG_TIMEOUT = 30                    # Sekunden, bevor FFmpeg abgeschossen wird
-BPM_LIMITS = (40, 210)                 # Alles außerhalb ist Müll/Fehler
+CSV_LOG_PATH = os.path.join(ANCHOR_BASE_PATH, "analysis_history_pc.csv")
 
 # --- MOOD TABLE ---
 MOOD_TABLE = {
@@ -76,80 +72,21 @@ def log_to_csv(data):
                 "Timestamp", "Filename", "Action", "BPM_Final", "Method",
                 "Anchor_Ref", "Score", "Confidence", "Essentia_Raw", "Librosa_Raw"
             ])
-            if not file_exists: writer.writeheader()
+            if not file_exists:
+                writer.writeheader()
             data["Timestamp"] = datetime.datetime.now().strftime(TIME_FMT)
             writer.writerow(data)
     except Exception as e:
         print(f" ⚠️  [CSV-ERROR] Konnte {CSV_LOG_PATH} nicht schreiben: {e}", flush=True)
 
-def move_to_aussortiert(filepath, reason="Unknown"):
-    if not os.path.exists(AUSSORTIERT_PATH):
-        try: os.makedirs(AUSSORTIERT_PATH)
-        except: return
-    filename = os.path.basename(filepath)
-    target = os.path.join(AUSSORTIERT_PATH, filename)
-    counter = 1
-    base, ext = os.path.splitext(target)
-    while os.path.exists(target):
-        target = f"{base}_{counter}{ext}"
-        counter += 1
+def repair_flac_id3(filepath):
+    if not filepath.lower().endswith(".flac"): return
     try:
-        print(f" 🗑️  [AUSSORTIERT] Grund: {reason} -> {os.path.basename(target)}", flush=True)
-        shutil.move(filepath, target)
-        with open(target + ".log", "w") as f:
-            f.write(f"Date: {datetime.datetime.now()}\nReason: {reason}\nOrigin: {filepath}\nVersion: {ALGO_VERSION}")
-    except Exception as e:
-        print(f" ❌ [ERROR] Verschieben fehlgeschlagen: {e}", flush=True)
-
-def robust_heal_and_verify(filepath):
-    """
-    Versucht Reparatur mit Timeout. Gibt True zurück, wenn erfolgreich.
-    """
-    temp_repaired = filepath + ".repaired_temp" + os.path.splitext(filepath)[1]
-    print(f" 🔧 [HEAL] Versuche Reparatur via FFmpeg (Timeout: {FFMPEG_TIMEOUT}s)...", flush=True)
-
-    cmd = []
-    if filepath.lower().endswith(".flac"):
-        cmd = ["ffmpeg", "-y", "-v", "error", "-i", filepath, "-c:a", "flac", temp_repaired]
-    else:
-        # MP3: Erst copy versuchen
-        cmd = ["ffmpeg", "-y", "-v", "error", "-i", filepath, "-c:a", "copy", temp_repaired]
-
-    try:
-        # NEU: Timeout hinzugefügt, damit Worker nicht einfriert
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        print(f" ❌ [HEAL-FAIL] FFmpeg Timeout nach {FFMPEG_TIMEOUT}s!", flush=True)
-        if os.path.exists(temp_repaired): os.remove(temp_repaired)
-        return False
-    except subprocess.CalledProcessError:
-        # Fallback: Re-Encode
-        try:
-            cmd = ["ffmpeg", "-y", "-v", "error", "-i", filepath, temp_repaired]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
-        except:
-            if os.path.exists(temp_repaired): os.remove(temp_repaired)
-            return False
-
-    # PRÜFUNG:
-    try:
-        loader = es.MonoLoader(filename=temp_repaired, sampleRate=44100)
-        test_audio = loader()
-        if len(test_audio) < 1000: raise ValueError("Audio leer")
-    except Exception:
-        if os.path.exists(temp_repaired): os.remove(temp_repaired)
-        return False
-
-    # ERFOLG:
-    try:
-        shutil.move(temp_repaired, filepath)
-        print(f" ✅ [HEAL-OK] Datei repariert.", flush=True)
-        return True
-    except Exception:
-        return False
+        audio = FLAC(filepath)
+        audio.save(deleteid3=True)
+    except: pass
 
 def read_metadata_for_embedding(filepath):
-    # ... (Code wie zuvor) ...
     try:
         f = mutagen.File(filepath)
         if isinstance(f, FLAC) and "XX_EMBEDDING_JSON" in f:
@@ -161,7 +98,6 @@ def read_metadata_for_embedding(filepath):
     return None
 
 def read_metadata_from_tag(filepath):
-    # ... (Code wie zuvor) ...
     try:
         f = mutagen.File(filepath)
         data = {"emb": None, "bpm": 120}
@@ -176,7 +112,6 @@ def read_metadata_from_tag(filepath):
     except: return {"emb": None, "bpm": 120}
 
 def load_all_anchors():
-    # ... (Code wie zuvor) ...
     anchors = []
     if not os.path.exists(ANCHOR_BASE_PATH): return anchors
     for category in ["FAST", "MID", "SLOW"]:
@@ -190,10 +125,11 @@ def load_all_anchors():
     return anchors
 
 def determine_bpm_logic(essentia_bpm, librosa_bpm, anchor_bpm):
-    # ... (Code wie zuvor) ...
     TOLERANCE = 4.0
-    if abs(essentia_bpm - anchor_bpm) <= TOLERANCE: return int(round(essentia_bpm)), "Essentia (Direct)"
-    if librosa_bpm > 0 and abs(librosa_bpm - anchor_bpm) <= TOLERANCE: return int(round(librosa_bpm)), "Librosa (Direct)"
+    if abs(essentia_bpm - anchor_bpm) <= TOLERANCE:
+        return int(round(essentia_bpm)), "Essentia (Direct)"
+    if librosa_bpm > 0 and abs(librosa_bpm - anchor_bpm) <= TOLERANCE:
+        return int(round(librosa_bpm)), "Librosa (Direct)"
     candidates = []
     for factor in [1, 2, 3]:
         candidates.append((essentia_bpm * factor, f"Essentia x{factor}"))
@@ -207,7 +143,6 @@ def determine_bpm_logic(essentia_bpm, librosa_bpm, anchor_bpm):
     return int(round(best_val)), best_desc
 
 def determine_moods(bpm, key_str, dance, intensity):
-    # ... (Code wie zuvor) ...
     matches = []
     scale = "major" if any(x in key_str.lower() for x in ["major", "dur"]) else "minor"
     is_slow_ballad = (dance < 1.35) and (bpm < 95)
@@ -224,8 +159,7 @@ def determine_moods(bpm, key_str, dance, intensity):
         if match: matches.append(mood)
     return matches if matches else ["Ernst"]
 
-def write_tags(filepath, data, was_healed=False):
-    """Schreibt Metadaten und Audit-Tags."""
+def write_tags(filepath, data):
     try:
         f = mutagen.File(filepath)
         if f is None: return False
@@ -249,68 +183,30 @@ def write_tags(filepath, data, was_healed=False):
         set_txxx('XX_EMBEDDING_JSON', data['XX_EMBEDDING_JSON'])
         set_txxx('XX_ANCHOR_MATCH', data['XX_ANCHOR_MATCH'])
         set_txxx('XX_ANALYZE_DONE', ts)
-
-        # NEU: Audit Trails
-        set_txxx('XX_ALGO_VERSION', ALGO_VERSION)
-        if was_healed:
-            set_txxx('XX_MODIFIED_BY', 'Self-Healer-FFmpeg')
-            set_txxx('XX_HEALED_DATE', ts)
-
         f.save(); return True
     except: return False
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--file", required=True); args = parser.parse_args()
     fname = os.path.basename(args.file)
+    repair_flac_id3(args.file)
 
-    if not os.path.exists(args.file): sys.exit(0)
-
-    # 1. Metadaten Check
     existing_emb = read_metadata_for_embedding(args.file)
     cache_status = "♻️ (Cache)" if existing_emb else "🆕 (Neu)"
     print(f" 🎵 [START] {fname} {cache_status}", flush=True)
 
-    audio_ess = None
-    was_healed = False # Flag für Tags später
-
-    # 2. SAFE LOADING LOOP
     try:
         loader = es.MonoLoader(filename=args.file, sampleRate=44100)
         audio_ess = loader()
-    except RuntimeError as e:
-        print(f" ⚠️  [CORRUPT] Crash erkannt: {e}. Starte Heilung...", flush=True)
-
-        if robust_heal_and_verify(args.file):
-            try:
-                print(f" 🔄 [RETRY] Lade geheilte Datei...", flush=True)
-                loader = es.MonoLoader(filename=args.file, sampleRate=44100)
-                audio_ess = loader()
-                was_healed = True # Markieren für Audit-Tag
-            except Exception as e2:
-                move_to_aussortiert(args.file, reason=f"After Heal: {e2}")
-                sys.exit(0)
-        else:
-            move_to_aussortiert(args.file, reason=f"Initial Crash: {e}")
-            sys.exit(0)
-
-    if audio_ess is None or len(audio_ess) < 44100:
-        move_to_aussortiert(args.file, reason="Audio empty/too short")
-        sys.exit(0)
-
-    # 3. Normale Analyse
-    try:
         bpm_ess = es.RhythmExtractor2013(method="multifeature")(audio_ess)[0]
         dance = es.Danceability()(audio_ess)[0]
         intensity = min(1.0, (np.sqrt(np.mean(audio_ess**2)) * 3.5))
 
-        bpm_lib = 0
-        try:
-            with sf.SoundFile(args.file) as sf_f:
-                audio_np = sf_f.read(dtype='float32')
-                if len(audio_np.shape) > 1: audio_np = np.mean(audio_np, axis=1)
-                tempo_data, _ = librosa.beat.beat_track(y=audio_np, sr=sf_f.samplerate)
-                bpm_lib = float(tempo_data[0]) if isinstance(tempo_data, (np.ndarray, list)) else float(tempo_data)
-        except Exception: pass
+        with sf.SoundFile(args.file) as sf_f:
+            audio_np = sf_f.read(dtype='float32')
+            if len(audio_np.shape) > 1: audio_np = np.mean(audio_np, axis=1)
+            tempo_data, _ = librosa.beat.beat_track(y=audio_np, sr=sf_f.samplerate)
+            bpm_lib = float(tempo_data[0]) if isinstance(tempo_data, (np.ndarray, list)) else float(tempo_data)
 
         if existing_emb:
             current_emb = existing_emb
@@ -345,24 +241,22 @@ def main():
         else:
             print(f"    └─ ⚠️ Warnung: Kein Anker gefunden. Nutze Essentia Standard.", flush=True)
 
-        # NEU: Plausibilitäts-Check für BPM
-        if final_bpm < BPM_LIMITS[0] or final_bpm > BPM_LIMITS[1]:
-            move_to_aussortiert(args.file, reason=f"BPM implausible: {final_bpm}")
-            sys.exit(0)
-
         try: key, scale = es.KeyExtractor(profileType="edma")(audio_ess)[:2]
         except: key, scale = es.KeyExtractor(profileType="bgate")(audio_ess)[:2]
 
-        moods = determine_moods(final_bpm, f"{key} {scale}", dance, intensity)
+        # 1. Moods berechnen (Ergebnis ist DEUTSCH, da MOOD_TABLE deutsch ist)
+        raw_moods = determine_moods(final_bpm, f"{key} {scale}", dance, intensity)
 
-        # HIER ÜBERGEBEN WIR 'was_healed'
+        # 2. Moods übersetzen (je nach starain_config Einstellung)
+        final_moods = cfg.translate_list(raw_moods)
+
         write_tags(args.file, {
             'bpm': final_bpm, 'key': f"{key} {scale}",
             'XX_DANCEABILITY': round(dance, 4), 'XX_INTENSITY': round(intensity, 4),
             'XX_EMBEDDING_JSON': json.dumps(current_emb),
             'XX_ANCHOR_MATCH': anchor_info,
-            'MOOD': moods
-        }, was_healed=was_healed)
+            'MOOD': final_moods  # <--- Jetzt übersetzt
+        })
 
         log_to_csv({
             "Filename": fname, "Action": "UPDATE",
