@@ -85,7 +85,7 @@ WICHTIG!:
 ### 2. Klonen Sie das Repository
 ```bash
 git clone [https://github.com/weisserwerwolf89/STARAIN.git](https://github.com/weisserwerwolf89/STARAIN.git)
-cd navidrome-ai-architect
+cd STARAIN
 
 3. Konfigurieren Sie die Umgebung
 
