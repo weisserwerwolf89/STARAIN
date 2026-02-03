@@ -10,7 +10,7 @@ This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It 
 
 ## ✨ Features
 
-### 🧠 The Analyzer (`music-analyze`)
+### 🧠 The Analyzer (music-analyze)
 
     Vector Embeddings (Sonic DNA): Extracts high-dimensional feature vectors (Embeddings) for every track. This maps the mathematical "soul" of the music, allowing the AI to find songs that sound similar, regardless of their genre tags.
 
@@ -21,6 +21,7 @@ This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It 
     Quality Gate: Acts as a proactive filter. Automatically detects corrupted files, 0-byte errors, or fake extensions and moves them to a secure "Quarantine" area for manual inspection, keeping your main library pristine.
 
     Anchor System: Uses your manually selected reference tracks ("Anchors") to calibrate the AI's predictions to your specific personal taste.
+    
 
 ### 🎧 The DJ (`music-dj`)
 
