@@ -17,9 +17,28 @@ This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It 
 * **Anchor System:** Uses reference tracks ("Anchors") to calibrate the analysis to your personal taste.
 
 ### 🎧 The DJ (`music-dj`)
-* **Smart Playlists:** Generates new mixes automatically based on user ratings and listening history.
-* **Harmonic Mixing:** Creates "Flow-Mixes" by matching songs with compatible musical Keys (Camelot Wheel) and similar BPM.
-* **Database Integration:** Writes playlists and tags directly into the Navidrome SQLite database for instant availability in any client.
+
+1. Seed-Based Instant Mixes Instead of random shuffling, STARAIN uses your interaction as a trigger. Liking (by clicking on the heart at your app or navidrome) a song immediately defines it as a "Seed Track". The system then generates a cohesive playlist built around the sonic characteristics of that specific track.
+
+2. Adaptive Mood Playlists (The "One-Strike" Rule) Daily generated playlists based on detected moods. It features a strict Invisible Blacklist: If you delete a song from a mood playlist once, STARAIN learns that this track never belongs in that specific mood again.
+
+3. Intelligent Auto-Rating System Stars are earned, not just given. The system manages ratings based on your listening habits:
+
+    5 Plays → ⭐⭐⭐ (Good)
+
+    15 Plays → ⭐⭐⭐⭐ (Great)
+
+    30 Plays → ⭐⭐⭐⭐⭐ (Favorite)
+
+    Manual Override: If you set a rating manually, it is locked and protected from auto-updates for 3 years.
+
+    Soft Ban: Songs with 1 or 2 stars are automatically excluded from all generated playlists.
+
+4. Global AI Blacklist A dedicated system playlist acts as a Global Blocklist. Any song added here is strictly forbidden for the Auto-DJ to choose, regardless of its other metrics.
+
+5. Playlist Lifecycle & Permanence Your manually created playlists are sacred and never touched.
+
+    The "Save" Mechanic: AI-generated Mood-playlists are ephemeral. To keep one forever, simply rename it. STARAIN recognizes the name change, treats it as a manual user playlist, and generates a fresh new Mix in its place.
 
 ## ⚓ The Anchor System (BPM Calibration)
 
