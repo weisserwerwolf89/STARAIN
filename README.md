@@ -126,7 +126,7 @@ Plaintext
 
 /home/your-user/docker/STARAIN
 ├── music/              <-- Your Song Collection
-├── navidrome/          <-- Database & Cache (Backup this!)
+├── navidrome/          <-- Database
 ├── cache/              
 ├── music_anchors/      <-- (Optional) Reference tracks for AI
 └── music_trash/        <-- Quarantine for bad/corrupted files
