@@ -6,7 +6,6 @@ Stefan Aretz AI for Navidrome — Let it rain smart playlists.
 
 This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It monitors your library, uses advanced audio analysis (Essentia & TensorFlow) to enrich your files with metadata, and acts as an automatic DJ that creates flow-perfect playlists based on Mood, Key, and BPM.
 
----
 
 ## ✨ Features
 
