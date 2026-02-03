@@ -124,11 +124,13 @@ Recommended Host Folder Structure
 To keep things clean, organize your host folders like this:
 Plaintext
 
-/home/your-user/
+/home/your-user/docker/STARAIN
 ├── music/              <-- Your Song Collection
 ├── navidrome/          <-- Database & Cache (Backup this!)
+├── cache/              
 ├── music_anchors/      <-- (Optional) Reference tracks for AI
 └── music_trash/        <-- Quarantine for bad/corrupted files
+
 ```
 📜 License
 
