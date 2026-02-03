@@ -11,15 +11,15 @@ This project acts as a "Sidecar" to [Navidrome](https://www.navidrome.org/). It 
 
 ### 🧠 The Analyzer (music-analyze)
 
-    1. Vector Embeddings (Sonic DNA): Extracts high-dimensional feature vectors (Embeddings) for every track. This maps the mathematical "soul" of the music, allowing the AI to find songs that sound similar, regardless of their genre tags.
+1. Vector Embeddings (Sonic DNA): Extracts high-dimensional feature vectors (Embeddings) for every track. This maps the mathematical "soul" of the music, allowing the AI to find songs that sound similar, regardless of their genre tags.
 
-    2. Deep Audio Analysis: Uses the Essentia library to extract precise technical metrics: BPM, Key, Danceability, Energy, and Dynamic Range.
+2. Deep Audio Analysis: Uses the Essentia library to extract precise technical metrics: BPM, Key, Danceability, Energy, and Dynamic Range.
 
-    3. Mood Detection: Classifies songs into distinct emotional categories (e.g., Happy, Aggressive, Relaxed, Party) using pre-trained TensorFlow models.
+3. Mood Detection: Classifies songs into distinct emotional categories (e.g., Happy, Aggressive, Relaxed, Party) using pre-trained TensorFlow models.
 
-    4. Quality Gate: Acts as a proactive filter. Automatically detects corrupted files, 0-byte errors, or fake extensions and moves them to a secure "Quarantine" area for manual inspection, keeping your main library pristine.
+4. Quality Gate: Acts as a proactive filter. Automatically detects corrupted files, 0-byte errors, or fake extensions and moves them to a secure "Quarantine" area for manual inspection, keeping your main library pristine.
 
-    5. Anchor System: Uses your manually selected reference tracks ("Anchors") to calibrate the AI's predictions to your specific personal taste.
+5. Anchor System: Uses your manually selected reference tracks ("Anchors") to calibrate the AI's predictions to your specific personal taste.
     
 
 ### 🎧 The DJ (`music-dj`)
